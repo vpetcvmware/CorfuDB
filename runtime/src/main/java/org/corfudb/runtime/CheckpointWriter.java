@@ -210,6 +210,15 @@ public class CheckpointWriter<T extends Map> {
      * @return Stream of global log addresses of the CONTINUATION records written.
      */
     public List<Long> appendObjectState() {
+        long ts1 = System.nanoTime();
+        try {
+            return _appendObjectState();
+        } finally {
+            long ts2 = System.nanoTime();
+            Tracer.getTracer().log("checkpointC [id] " + streamId + " [dur] " + (ts2 - ts1));
+        }
+    }
+    public List<Long> _appendObjectState() {
         ImmutableMap<CheckpointEntry.CheckpointDictKey,String> mdkv =
                 ImmutableMap.copyOf(this.mdkv);
         List<Long> continuationAddresses = new ArrayList<>();
@@ -236,6 +245,7 @@ public class CheckpointWriter<T extends Map> {
                         author, checkpointId, streamId, mdkv, smrEntries);
 
                 long pos = sv.append(Collections.singleton(checkpointStreamID), cp, null);
+                Tracer.getTracer().log("checkpointB [id] " + streamId);
 
                 postAppendFunc.accept(cp, pos);
                 continuationAddresses.add(pos);
@@ -262,6 +272,7 @@ public class CheckpointWriter<T extends Map> {
                         .CheckpointEntryType.CONTINUATION,
                         author, checkpointId, streamId, mdkv, smrEntries);
                 long pos = sv.append(Collections.singleton(checkpointStreamID), cp, null);
+                Tracer.getTracer().log("checkpointNB [id] " + streamId);
 
                 postAppendFunc.accept(cp, pos);
                 continuationAddresses.add(pos);

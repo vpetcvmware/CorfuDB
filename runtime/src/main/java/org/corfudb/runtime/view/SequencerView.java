@@ -6,6 +6,7 @@ import java.util.UUID;
 import org.corfudb.protocols.wireprotocol.TokenResponse;
 import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
 import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.Tracer;
 import org.corfudb.util.CFUtils;
 
 
@@ -31,6 +32,16 @@ public class SequencerView extends AbstractView {
      * @return The first token retrieved.
      */
     public TokenResponse nextToken(Set<UUID> streamIDs, int numTokens) {
+        long ts1 = System.nanoTime();
+        try {
+            return _nextToken(streamIDs, numTokens);
+        } finally {
+            long ts2 = System.nanoTime();
+            Tracer.getTracer().log("Seq [dur] " + (ts2 - ts1) +" [ids] " + streamIDs + " [num] " + numTokens);
+        }
+    }
+
+    public TokenResponse _nextToken(Set<UUID> streamIDs, int numTokens) {
         return layoutHelper(e -> CFUtils.getUninterruptibly(e.getPrimarySequencerClient()
                 .nextToken(streamIDs, numTokens)));
     }
@@ -38,6 +49,17 @@ public class SequencerView extends AbstractView {
 
     public TokenResponse nextToken(Set<UUID> streamIDs, int numTokens,
                                    TxResolutionInfo conflictInfo) {
+        long ts1 = System.nanoTime();
+        try {
+            return _nextToken(streamIDs, numTokens, conflictInfo);
+        } finally {
+            long ts2 = System.nanoTime();
+            Tracer.getTracer().log("SeqTx [dur] " + (ts2 - ts1) +" [ids] " + streamIDs + " [num] " + numTokens);
+        }
+    }
+
+    public TokenResponse _nextToken(Set<UUID> streamIDs, int numTokens,
+                                  TxResolutionInfo conflictInfo) {
         return layoutHelper(e -> CFUtils.getUninterruptibly(e.getPrimarySequencerClient()
                 .nextToken(streamIDs, numTokens, conflictInfo)));
     }

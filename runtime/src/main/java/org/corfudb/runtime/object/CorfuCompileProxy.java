@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.corfudb.protocols.logprotocol.SMREntry;
 import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
 import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.Tracer;
 import org.corfudb.runtime.exceptions.AbortCause;
 import org.corfudb.runtime.exceptions.NetworkException;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
@@ -167,9 +168,21 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
     @Override
     public <R> R access(ICorfuSMRAccess<R, T> accessMethod,
                         Object[] conflictObject) {
+        long ts1 = System.nanoTime();
         boolean isEnabled = MetricsUtils.isMetricsCollectionEnabled();
         try (Timer.Context context = MetricsUtils.getConditionalContext(isEnabled, timerAccess)) {
             return accessInner(accessMethod, conflictObject, isEnabled);
+        } finally {
+            long ts2 = System.nanoTime();
+
+            if (TransactionalContext.isInTransaction()) {
+                Tracer.getTracer().log("access(tx) [dur] " + (ts2 - ts1) + " [type] " +
+                TransactionalContext.getCurrentContext().builder.getType().toString() + " [id] " + getStreamID() + " [method] "
+                + new Throwable().getStackTrace()[1].getMethodName());
+            } else {
+                Tracer.getTracer().log("access(nonTx) [dur] " + (ts2 - ts1) + " [id] " + getStreamID()+ " [method] "
+                        + new Throwable().getStackTrace()[1].getMethodName());
+            }
         }
     }
 
@@ -217,8 +230,20 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
     @Override
     public long logUpdate(String smrUpdateFunction, final boolean keepUpcallResult,
                           Object[] conflictObject, Object... args) {
+        long ts1 = System.nanoTime();
         try (Timer.Context context = MetricsUtils.getConditionalContext(timerLogWrite)) {
             return logUpdateInner(smrUpdateFunction, keepUpcallResult, conflictObject, args);
+        } finally {
+            long ts2 = System.nanoTime();
+
+            if (TransactionalContext.isInTransaction()) {
+                Tracer.getTracer().log("logUpdate(tx) [dur] " + (ts2 - ts1) + " [type] " +
+                        TransactionalContext.getCurrentContext().builder.getType().toString() + " [id] " + getStreamID()
+                + " [method] " + smrUpdateFunction);
+            } else {
+                Tracer.getTracer().log("logUpdate(nonTx) [dur] " + (ts2 - ts1) + " [id] " + getStreamID()
+                        + " [method] " + smrUpdateFunction);
+            }
         }
     }
 
@@ -253,8 +278,18 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
      */
     @Override
     public <R> R getUpcallResult(long timestamp, Object[] conflictObject) {
+        long ts1 = System.nanoTime();
         try (Timer.Context context = MetricsUtils.getConditionalContext(timerUpcall);) {
             return getUpcallResultInner(timestamp, conflictObject);
+        } finally {
+            long ts2 = System.nanoTime();
+
+            if (TransactionalContext.isInTransaction()) {
+                Tracer.getTracer().log("getUpcallResult(tx) [dur] " + (ts2 - ts1) + " [type] " +
+                        TransactionalContext.getCurrentContext().builder.getType().toString() + " [id] " + getStreamID());
+            } else {
+                Tracer.getTracer().log("getUpcallResult(nonTx) [dur] " + (ts2 - ts1) + " [id] " + getStreamID());
+            }
         }
     }
 
@@ -360,43 +395,49 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
                 this.abortTransaction(e);
             }
         }
-        long sleepTime = 1L;
-        final long maxSleepTime = 1000L;
-        int retries = 1;
-        while (true) {
-            try {
-                rt.getObjectsView().TXBegin();
-                R ret = txFunction.get();
-                rt.getObjectsView().TXEnd();
-                return ret;
-            } catch (TransactionAbortedException e) {
-                // If TransactionAbortedException is due to a 'Network Exception' do not keep
-                // retrying a nested transaction indefinitely (this could go on forever).
-                // If this is part of an outer transaction abort and remove from context.
-                // Re-throw exception to client.
-                log.warn("TXExecute[{}] Abort with exception {}", this, e);
-                if (e.getAbortCause() == AbortCause.NETWORK) {
-                    if (TransactionalContext.getCurrentContext() != null) {
-                        TransactionalContext.getCurrentContext().abortTransaction(e);
-                        TransactionalContext.removeContext();
-                        throw e;
+        long ts1 = System.nanoTime();
+        try {
+            long sleepTime = 1L;
+            final long maxSleepTime = 1000L;
+            int retries = 1;
+            while (true) {
+                try {
+                    rt.getObjectsView().TXBegin();
+                    R ret = txFunction.get();
+                    rt.getObjectsView().TXEnd();
+                    return ret;
+                } catch (TransactionAbortedException e) {
+                    // If TransactionAbortedException is due to a 'Network Exception' do not keep
+                    // retrying a nested transaction indefinitely (this could go on forever).
+                    // If this is part of an outer transaction abort and remove from context.
+                    // Re-throw exception to client.
+                    log.warn("TXExecute[{}] Abort with exception {}", this, e);
+                    if (e.getAbortCause() == AbortCause.NETWORK) {
+                        if (TransactionalContext.getCurrentContext() != null) {
+                            TransactionalContext.getCurrentContext().abortTransaction(e);
+                            TransactionalContext.removeContext();
+                            throw e;
+                        }
                     }
-                }
 
-                if (retries == 1) {
-                    MetricsUtils
-                            .incConditionalCounter(isMetricsEnabled, counterTxnRetry1, 1);
+                    if (retries == 1) {
+                        MetricsUtils
+                                .incConditionalCounter(isMetricsEnabled, counterTxnRetry1, 1);
+                    }
+                    MetricsUtils.incConditionalCounter(isMetricsEnabled, counterTxnRetryN, 1);
+                    log.debug("Transactional function aborted due to {}, retrying after {} msec",
+                            e, sleepTime);
+                    Sleep.MILLISECONDS.sleepUninterruptibly(sleepTime);
+                    sleepTime = min(sleepTime * 2L, maxSleepTime);
+                    retries++;
+                } catch (Exception e) {
+                    log.warn("TXExecute[{}] Abort with Exception: {}", this, e);
+                    this.abortTransaction(e);
                 }
-                MetricsUtils.incConditionalCounter(isMetricsEnabled, counterTxnRetryN, 1);
-                log.debug("Transactional function aborted due to {}, retrying after {} msec",
-                        e, sleepTime);
-                Sleep.MILLISECONDS.sleepUninterruptibly(sleepTime);
-                sleepTime = min(sleepTime * 2L, maxSleepTime);
-                retries++;
-            } catch (Exception e) {
-                log.warn("TXExecute[{}] Abort with Exception: {}", this, e);
-                this.abortTransaction(e);
             }
+        } finally {
+            long ts2 = System.nanoTime();
+            Tracer.getTracer().log("TXExecute [dur] " + (ts2 - ts1) + " [id] " + getStreamID());
         }
     }
 

@@ -15,6 +15,7 @@ import org.corfudb.protocols.logprotocol.CheckpointEntry;
 import org.corfudb.protocols.wireprotocol.ILogData;
 import org.corfudb.protocols.wireprotocol.TokenResponse;
 import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.Tracer;
 import org.corfudb.runtime.exceptions.AppendException;
 import org.corfudb.runtime.exceptions.OverwriteException;
 import org.corfudb.runtime.exceptions.StaleTokenException;
@@ -228,76 +229,85 @@ public class BackpointerStreamView extends AbstractQueuedStreamView {
                                       final long startAddress,
                                       final long stopAddress,
                                       final Function<ILogData, BackpointerOp> filter) {
-        log.trace("followBackPointers: stmreadId[{}], queue[{}], startAddress[{}], stopAddress[{}]," +
-                "filter[{}]", streamId, queue, startAddress, stopAddress, filter);
-        // Whether or not we added entries to the queue.
-        boolean entryAdded = false;
-        // The current address which we are reading from.
-        long currentAddress = startAddress;
 
-        // Loop until we have reached the stop address.
-        while (currentAddress > stopAddress  && Address.isAddress(currentAddress)) {
-            backpointerCount++;
+        long ts1 = System.nanoTime();
 
-            // Read the current address
-            ILogData d;
-            try {
-                log.trace("followBackPointers: readAddress[{}]", currentAddress);
-                d = read(currentAddress);
-            } catch (TrimmedException e) {
-                if (options.ignoreTrimmed) {
-                    log.warn("followBackpointers: Ignoring trimmed exception for address[{}]," +
-                            " stream[{}]", currentAddress, id);
-                    return entryAdded;
-                } else {
-                    throw e;
-                }
-            }
+        try {
+            log.trace("followBackPointers: stmreadId[{}], queue[{}], startAddress[{}], stopAddress[{}]," +
+                    "filter[{}]", streamId, queue, startAddress, stopAddress, filter);
+            // Whether or not we added entries to the queue.
+            boolean entryAdded = false;
+            // The current address which we are reading from.
+            long currentAddress = startAddress;
 
-            // If it contains the stream we are interested in
-            if (d.containsStream(streamId)) {
-                log.trace("followBackPointers: address[{}] contains streamId[{}], apply filter", currentAddress,
-                        streamId);
-                // Check whether we should include the address
-                BackpointerOp op = filter.apply(d);
-                if (op == BackpointerOp.INCLUDE
-                        || op == BackpointerOp.INCLUDE_STOP) {
-                    log.trace("followBackPointers: Adding backpointer to address[{}] to queue", currentAddress);
-                    queue.add(currentAddress);
-                    entryAdded = true;
-                    // Check if we need to stop
-                    if (op == BackpointerOp.INCLUDE_STOP) {
+            // Loop until we have reached the stop address.
+            while (currentAddress > stopAddress && Address.isAddress(currentAddress)) {
+                backpointerCount++;
+
+                // Read the current address
+                ILogData d;
+                try {
+                    log.trace("followBackPointers: readAddress[{}]", currentAddress);
+                    d = read(currentAddress);
+                } catch (TrimmedException e) {
+                    if (options.ignoreTrimmed) {
+                        log.warn("followBackpointers: Ignoring trimmed exception for address[{}]," +
+                                " stream[{}]", currentAddress, id);
                         return entryAdded;
+                    } else {
+                        throw e;
                     }
                 }
-            }
 
-            boolean singleStep = true;
-            // Now calculate the next address
-            // Try using backpointers first
+                // If it contains the stream we are interested in
+                if (d.containsStream(streamId)) {
+                    log.trace("followBackPointers: address[{}] contains streamId[{}], apply filter", currentAddress,
+                            streamId);
+                    // Check whether we should include the address
+                    BackpointerOp op = filter.apply(d);
+                    if (op == BackpointerOp.INCLUDE
+                            || op == BackpointerOp.INCLUDE_STOP) {
+                        log.trace("followBackPointers: Adding backpointer to address[{}] to queue", currentAddress);
+                        queue.add(currentAddress);
+                        entryAdded = true;
+                        // Check if we need to stop
+                        if (op == BackpointerOp.INCLUDE_STOP) {
+                            return entryAdded;
+                        }
+                    }
+                }
 
-            log.trace("followBackPointers: calculate the next address");
+                boolean singleStep = true;
+                // Now calculate the next address
+                // Try using backpointers first
 
-            if (!runtime.getParameters().isBackpointersDisabled() && d.hasBackpointer(streamId)) {
-                long tmp = d.getBackpointer(streamId);
-                log.trace("followBackPointers: backpointer points to {}", tmp);
-                // if backpointer is a valid log address or Address.NON_EXIST
-                // (beginning of the stream), do not single step back on the log
-                if (Address.isAddress(tmp) || tmp == Address.NON_EXIST) {
-                    currentAddress = tmp;
-                    singleStep = false;
+                log.trace("followBackPointers: calculate the next address");
+
+                if (!runtime.getParameters().isBackpointersDisabled() && d.hasBackpointer(streamId)) {
+                    long tmp = d.getBackpointer(streamId);
+                    log.trace("followBackPointers: backpointer points to {}", tmp);
+                    // if backpointer is a valid log address or Address.NON_EXIST
+                    // (beginning of the stream), do not single step back on the log
+                    if (Address.isAddress(tmp) || tmp == Address.NON_EXIST) {
+                        currentAddress = tmp;
+                        singleStep = false;
+                    }
+                }
+
+                if (singleStep) {
+                    // backpointers failed, so we're
+                    // downgrading to a linear scan
+                    Tracer.getTracer().log("singleStepping [id] " + streamId);
+                    log.trace("followBackPointers: downgrading to single step, backpointer failed");
+                    currentAddress = currentAddress - 1;
                 }
             }
 
-            if (singleStep) {
-                // backpointers failed, so we're
-                // downgrading to a linear scan
-                log.trace("followBackPointers: downgrading to single step, backpointer failed");
-                currentAddress = currentAddress - 1;
-            }
+            return entryAdded;
+        } finally {
+            long ts2 = System.nanoTime();
+            Tracer.getTracer().log("followBackpointers [id] " + streamId + " [dur] " + (ts2 - ts1));
         }
-
-        return entryAdded;
 
     }
 

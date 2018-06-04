@@ -12,6 +12,7 @@ import org.corfudb.protocols.wireprotocol.ILogData;
 import org.corfudb.protocols.wireprotocol.IToken;
 import org.corfudb.protocols.wireprotocol.LogData;
 import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.Tracer;
 import org.corfudb.runtime.clients.LogUnitClient;
 import org.corfudb.runtime.exceptions.OverwriteException;
 import org.corfudb.runtime.exceptions.StaleTokenException;
@@ -43,7 +44,7 @@ public class AddressSpaceView extends AbstractView {
     /**
      * A cache for read results.
      */
-    final LoadingCache<Long, ILogData> readCache = Caffeine.<Long, ILogData>newBuilder()
+    public final LoadingCache<Long, ILogData> readCache = Caffeine.<Long, ILogData>newBuilder()
             .maximumSize(runtime.getParameters().getNumCacheEntries())
             .expireAfterAccess(runtime.getParameters().getCacheExpiryTime(), TimeUnit.SECONDS)
             .expireAfterWrite(runtime.getParameters().getCacheExpiryTime(), TimeUnit.SECONDS)
@@ -51,12 +52,24 @@ public class AddressSpaceView extends AbstractView {
             .build(new CacheLoader<Long, ILogData>() {
                 @Override
                 public ILogData load(Long value) throws Exception {
-                    return cacheFetch(value);
+                    long ts1 = System.nanoTime();
+                    try {
+                        return cacheFetch(value);
+                    } finally {
+                        long ts2 = System.nanoTime();
+                        Tracer.getTracer().log("cacheLoad [dur] " + (ts2 - ts1) + " [addr] " + value);
+                    }
                 }
 
                 @Override
                 public Map<Long, ILogData> loadAll(Iterable<? extends Long> keys) throws Exception {
-                    return cacheFetch((Iterable<Long>) keys);
+                    long ts1 = System.nanoTime();
+                    try {
+                        return cacheFetch((Iterable<Long>) keys);
+                    } finally {
+                        long ts2 = System.nanoTime();
+                        Tracer.getTracer().log("cacheLoadAll [dur] " + (ts2 - ts1));
+                    }
                 }
             });
 

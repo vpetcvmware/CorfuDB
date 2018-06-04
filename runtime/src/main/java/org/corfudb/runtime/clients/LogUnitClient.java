@@ -23,6 +23,7 @@ import org.corfudb.protocols.wireprotocol.TrimRequest;
 import org.corfudb.protocols.wireprotocol.WriteMode;
 import org.corfudb.protocols.wireprotocol.WriteRequest;
 import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.Tracer;
 import org.corfudb.runtime.exceptions.WriteSizeException;
 import org.corfudb.util.CorfuComponent;
 import org.corfudb.util.serializer.Serializers;
@@ -263,6 +264,7 @@ public class LogUnitClient extends AbstractClient {
      * @param address The address to fill a hole at.
      */
     public CompletableFuture<Boolean> fillHole(long address) {
+        Tracer.getTracer().log("fillHole [addr] "+ address);
         Timer.Context context = getTimerContext("fillHole");
         CompletableFuture<Boolean> cf = sendMessageWithFuture(
                 CorfuMsgType.FILL_HOLE.payloadMsg(new FillHoleRequest(null, address)));

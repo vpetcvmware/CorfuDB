@@ -18,6 +18,7 @@ import org.corfudb.protocols.logprotocol.SMREntry;
 import org.corfudb.protocols.wireprotocol.ILogData;
 import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
 import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.Tracer;
 import org.corfudb.runtime.exceptions.AbortCause;
 import org.corfudb.runtime.exceptions.AppendException;
 import org.corfudb.runtime.exceptions.OverwriteException;
@@ -258,7 +259,7 @@ public class OptimisticTransactionalContext extends AbstractTransactionalContext
      * @return  the commit address
      */
     public long getConflictSetAndCommit(ConflictSetInfo conflictSet) {
-
+        long ts1 = System.nanoTime();
         if (TransactionalContext.isInNestedTransaction()) {
             getParentContext().addTransaction(this);
             commitAddress = AbstractTransactionalContext.FOLDED_ADDRESS;
@@ -309,6 +310,9 @@ public class OptimisticTransactionalContext extends AbstractTransactionalContext
             // which means we must abort.
             throw new TransactionAbortedException(txInfo, null, null,
                 AbortCause.CONFLICT, oe, this);
+        } finally {
+            long ts2 = System.nanoTime();
+            Tracer.getTracer().log("getConflictSetAndCommit [dur] " + (ts2 - ts1) + " [ids] " + affectedStreams);
         }
 
         log.trace("Commit[{}] Acquire address {}", this, address);
@@ -323,6 +327,15 @@ public class OptimisticTransactionalContext extends AbstractTransactionalContext
 
     /** Try to commit the optimistic updates to each proxy. */
     protected void tryCommitAllProxies() {
+        long ts1 = System.nanoTime();
+        try {
+            _tryCommitAllProxies();
+        } finally {
+            long ts2 = System.nanoTime();
+            Tracer.getTracer().log("tryCommitAllProxies [dur] " + (ts2 - ts1));
+        }
+    }
+    protected void _tryCommitAllProxies() {
         // First, get the committed entry
         // in order to get the backpointers
         // and the underlying SMREntries.

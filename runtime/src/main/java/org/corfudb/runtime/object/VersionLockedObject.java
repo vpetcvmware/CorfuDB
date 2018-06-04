@@ -14,6 +14,7 @@ import java.util.function.Supplier;
 
 import lombok.extern.slf4j.Slf4j;
 import org.corfudb.protocols.logprotocol.SMREntry;
+import org.corfudb.runtime.Tracer;
 import org.corfudb.runtime.exceptions.NoRollbackException;
 import org.corfudb.runtime.exceptions.unrecoverable.UnrecoverableCorfuError;
 import org.corfudb.runtime.object.transactions.WriteSetSMRStream;
@@ -181,6 +182,7 @@ public class VersionLockedObject<T> {
                         Function<T, R> accessFunction) {
         // First, we try to do an optimistic read on the object, in case it
         // meets the conditions for direct access.
+        long ts1 = System.nanoTime();
         long ts = lock.tryOptimisticRead();
         if (ts != 0) {
             try {
@@ -192,6 +194,8 @@ public class VersionLockedObject<T> {
                     long versionForCorrectness = getVersionUnsafe();
                     if (lock.validate(ts)) {
                         correctnessLogger.trace("Version, {}", versionForCorrectness);
+                        long ts2 = System.nanoTime();
+                        Tracer.getTracer().log("accessLockOp [dur] " + (ts2 - ts1) + " [id] " + getID());
                         return ret;
                     }
                 }
@@ -226,6 +230,8 @@ public class VersionLockedObject<T> {
                 long versionForCorrectness = getVersionUnsafe();
                 if (lock.validate(ts)) {
                     correctnessLogger.trace("Version, {}", versionForCorrectness);
+                    long ts2 = System.nanoTime();
+                    Tracer.getTracer().log("accessLock [dur] " + (ts2 - ts1) + " [id] " + getID());
                     return ret;
                 }
             }
@@ -233,6 +239,8 @@ public class VersionLockedObject<T> {
             updateFunction.accept(this);
             correctnessLogger.trace("Version, {}", getVersionUnsafe());
             log.trace("Access [{}] Updated (writelock) access at {}", this, getVersionUnsafe());
+            long ts2 = System.nanoTime();
+            Tracer.getTracer().log("accessLock [dur] " + (ts2 - ts1) + " [id] " + getID());
             return accessFunction.apply(object);
             // And perform the access
         } finally {
@@ -293,6 +301,15 @@ public class VersionLockedObject<T> {
      * @param timestamp The timestamp to update the object to.
      */
     public void syncObjectUnsafe(long timestamp) {
+        long ts1 = System.nanoTime();
+        try {
+            _syncObjectUnsafe(timestamp);
+        } finally {
+            long ts2 = System.nanoTime();
+            Tracer.getTracer().log("syncObjectUnsafe [dur]" + (ts2 - ts1) + " [id] " + getID());
+        }
+    }
+    public void _syncObjectUnsafe(long timestamp) {
         // If there is an optimistic stream attached,
         // and it belongs to this thread use that
         if (optimisticallyOwnedByThreadUnsafe()) {
@@ -431,6 +448,7 @@ public class VersionLockedObject<T> {
         object = newObjectFn.get();
         smrStream.reset();
         optimisticStream = null;
+        Tracer.getTracer().log("resetUnsafe [id] " + getID());
     }
 
     /**
@@ -554,35 +572,47 @@ public class VersionLockedObject<T> {
      * @throws NoRollbackException If an entry in the stream did not contain
      *                             undo information.
      */
+
     protected void rollbackStreamUnsafe(ISMRStream stream, long rollbackVersion) {
         // If we're already at or before the given version, there's
         // nothing to do
+        long ts1 = System.nanoTime();
         if (stream.pos() <= rollbackVersion) {
             return;
         }
 
         List<SMREntry> entries = stream.current();
 
-        while (entries != null) {
-            if (entries.stream().allMatch(x -> x.isUndoable())) {
-                // start from the end, process one at a time
-                ListIterator<SMREntry> it =
-                        entries.listIterator(entries.size());
-                while (it.hasPrevious()) {
-                    applyUndoRecordUnsafe(it.previous());
+        int counter = 1;
+
+        try {
+            while (entries != null) {
+                if (entries.stream().allMatch(x -> x.isUndoable())) {
+                    // start from the end, process one at a time
+                    ListIterator<SMREntry> it =
+                            entries.listIterator(entries.size());
+                    while (it.hasPrevious()) {
+                        applyUndoRecordUnsafe(it.previous());
+                    }
+                } else {
+                    Optional<SMREntry> entry = entries.stream().findFirst();
+                    Tracer.getTracer().log("NoRollBack entry " + entry);
+                    throw new NoRollbackException(entry, stream.pos(), rollbackVersion);
                 }
-            } else {
-                Optional<SMREntry> entry = entries.stream().findFirst();
-                throw new NoRollbackException(entry, stream.pos(), rollbackVersion);
-            }
 
-            entries = stream.previous();
+                entries = stream.previous();
 
-            if (stream.pos() <= rollbackVersion) {
-                return;
+                if (stream.pos() <= rollbackVersion) {
+                    return;
+                }
             }
+        } finally {
+            long ts2 = System.nanoTime();
+            Tracer.getTracer().log("rollbackObjectUnsafe [dur] "+ (ts2 - ts1)+" [diff] " + counter +
+                    " [id] " + getID());
         }
 
+        Tracer.getTracer().log("NoRollBack, possibly empty map!");
         throw new NoRollbackException(stream.pos(), rollbackVersion);
     }
 
@@ -602,6 +632,18 @@ public class VersionLockedObject<T> {
      * @param timestamp The timestamp to sync up to.
      */
     protected void syncStreamUnsafe(ISMRStream stream, long timestamp) {
+
+        long ts = System.currentTimeMillis();
+        try {
+            _syncStreamUnsafe(stream, timestamp);
+        } finally {
+            long ts2 = System.currentTimeMillis();
+            Tracer.getTracer().log("syncStreamUnsafe [dur] " + (ts2 - ts) + " [dur] " + getID());
+        }
+    }
+
+
+    protected void _syncStreamUnsafe(ISMRStream stream, long timestamp) {
         log.trace("Sync[{}] {}", this, (timestamp == Address.OPTIMISTIC)
                 ? "Optimistic" : "to " + timestamp);
         long syncTo = (timestamp == Address.OPTIMISTIC) ? Address.MAX : timestamp;
