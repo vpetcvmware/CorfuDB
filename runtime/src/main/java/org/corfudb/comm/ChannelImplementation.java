@@ -28,16 +28,7 @@ public enum ChannelImplementation {
     /** Automatically select best channel type (EPOLL/KQUEUE if available, otherwise
      *  fallback to NIO).
      */
-    AUTO(Epoll.isAvailable() ? EpollSocketChannel.class :
-        KQueue.isAvailable() ? KQueueSocketChannel.class :
-            NioSocketChannel.class,
-        Epoll.isAvailable() ? EpollServerSocketChannel.class :
-            KQueue.isAvailable() ? KQueueServerSocketChannel.class :
-                NioServerSocketChannel.class,
-        (numThreads, factory) ->
-            Epoll.isAvailable() ? new EpollEventLoopGroup(numThreads, factory) :
-                KQueue.isAvailable() ? new KQueueEventLoopGroup(numThreads, factory) :
-                    new NioEventLoopGroup(numThreads, factory)),
+    AUTO(NioSocketChannel.class, NioServerSocketChannel.class, NioEventLoopGroup::new),
     NIO(NioSocketChannel.class, NioServerSocketChannel.class, NioEventLoopGroup::new),
     EPOLL(EpollSocketChannel.class, EpollServerSocketChannel.class, EpollEventLoopGroup::new),
     KQUEUE(KQueueSocketChannel.class, KQueueServerSocketChannel.class, KQueueEventLoopGroup::new),
