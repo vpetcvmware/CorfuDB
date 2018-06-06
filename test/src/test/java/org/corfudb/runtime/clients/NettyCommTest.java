@@ -1,23 +1,9 @@
 package org.corfudb.runtime.clients;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.ChannelFuture;
-
-import java.io.File;
-import java.io.IOException;
-import java.net.ServerSocket;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
-import java.util.Collections;
-import java.util.UUID;
-
-import javax.annotation.Nonnull;
-
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-
 import org.corfudb.AbstractCorfuTest;
 import org.corfudb.infrastructure.BaseServer;
 import org.corfudb.infrastructure.CorfuServer;
@@ -29,6 +15,17 @@ import org.corfudb.util.NodeLocator;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+
+import javax.annotation.Nonnull;
+import java.io.File;
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.util.Collections;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Created by mwei on 3/28/16.
@@ -320,7 +317,7 @@ public class NettyCommTest extends AbstractCorfuTest {
                 });
     }
 
-    UUID nodeId;
+    private UUID nodeId;
 
     @Test
     public void nettyServerClientHandshakeMatchIds() throws Exception {
