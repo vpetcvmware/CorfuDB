@@ -31,6 +31,15 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
 
 /**
  * A view of the address space implemented by Corfu.
@@ -143,6 +152,7 @@ public class AddressSpaceView extends AbstractView {
 
             // Do the write
             try {
+//                Sleep.MILLISECONDS.sleepUninterruptibly(50L);
                 l.getReplicationMode(token.getTokenValue())
                         .getReplicationProtocol(runtime)
                         .write(e, ld);

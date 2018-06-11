@@ -1,9 +1,20 @@
 package org.corfudb.integration;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-
 import com.google.common.collect.Range;
+import org.corfudb.generator.replayer.Replayer;
+import org.corfudb.protocols.wireprotocol.LogData;
+import org.corfudb.protocols.wireprotocol.ReadResponse;
+import org.corfudb.protocols.wireprotocol.TokenResponse;
+import org.corfudb.runtime.BootstrapUtil;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.CorfuRuntime.CorfuRuntimeParameters;
+import org.corfudb.runtime.collections.CorfuTable;
+import org.corfudb.runtime.exceptions.TransactionAbortedException;
+import org.corfudb.runtime.view.Layout;
+import org.corfudb.util.NodeLocator;
+import org.corfudb.util.Sleep;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -21,19 +32,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
-import org.corfudb.protocols.wireprotocol.LogData;
-import org.corfudb.protocols.wireprotocol.ReadResponse;
-import org.corfudb.protocols.wireprotocol.TokenResponse;
-import org.corfudb.runtime.BootstrapUtil;
-import org.corfudb.runtime.CorfuRuntime;
-import org.corfudb.runtime.CorfuRuntime.CorfuRuntimeParameters;
-import org.corfudb.runtime.collections.CorfuTable;
-import org.corfudb.runtime.exceptions.TransactionAbortedException;
-import org.corfudb.runtime.view.Layout;
-import org.corfudb.util.NodeLocator;
-import org.corfudb.util.Sleep;
-import org.junit.Before;
-import org.junit.Test;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+
 
 public class ClusterReconfigIT extends AbstractIT {
 
@@ -454,6 +455,36 @@ public class ClusterReconfigIT extends AbstractIT {
         shutdownCorfuServer(corfuServer_1);
         shutdownCorfuServer(corfuServer_2);
         shutdownCorfuServer(corfuServer_3);
+    }
+
+    @Test
+    public void replayCreateNsgLongTest() throws Exception {
+        // Set up cluster of 3 nodes.
+        final int PORT_0 = 9000;
+        final int PORT_1 = 9001;
+        final int PORT_2 = 9002;
+        Process corfuServer_1 = runUnbootstrappedPersistentServer(corfuSingleNodeHost, PORT_0);
+        Process corfuServer_2 = runUnbootstrappedPersistentServer(corfuSingleNodeHost, PORT_1);
+        Process corfuServer_3 = runUnbootstrappedPersistentServer(corfuSingleNodeHost, PORT_2);
+        final Layout layout = get3NodeLayout();
+
+        final int retries = 10;
+        BootstrapUtil.bootstrap(layout, retries, PARAMETERS.TIMEOUT_SHORT);
+
+        CorfuRuntime runtime = createDefaultRuntime();
+
+
+        final List<String> pathsToEventQueues =
+                Arrays.asList("src/test/resources/replayerWorkloads/dfw-600k-operations.list");
+
+        final long executionTime = Replayer.replayEventList(pathsToEventQueues, runtime);
+        final long executionTimeInSeconds = TimeUnit.SECONDS.convert(executionTime, TimeUnit.NANOSECONDS);
+        final long threshold = (long)(600);
+        testStatus += String.format("ReplayTime=%ds; Threshold=%ds", executionTimeInSeconds, threshold);
+        shutdownCorfuServer(corfuServer_1);
+        shutdownCorfuServer(corfuServer_2);
+        shutdownCorfuServer(corfuServer_3);
+        assertThat(executionTimeInSeconds).isLessThanOrEqualTo(threshold);
     }
 
     /**
