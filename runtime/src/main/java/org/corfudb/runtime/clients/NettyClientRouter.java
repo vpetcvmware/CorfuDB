@@ -14,6 +14,8 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.LengthFieldPrepender;
+import io.netty.handler.codec.compression.Lz4FrameDecoder;
+import io.netty.handler.codec.compression.Lz4FrameEncoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import lombok.Getter;
@@ -266,6 +268,8 @@ public class NettyClientRouter extends SimpleChannelInboundHandler<CorfuMsg>
         return new ChannelInitializer() {
             @Override
             protected void initChannel(@Nonnull Channel ch) throws Exception {
+                ch.pipeline().addLast(new Lz4FrameDecoder());
+                ch.pipeline().addLast(new Lz4FrameEncoder());
                 if (parameters.isTlsEnabled()) {
                     ch.pipeline().addLast("ssl", sslContext.newHandler(ch.alloc()));
                 }

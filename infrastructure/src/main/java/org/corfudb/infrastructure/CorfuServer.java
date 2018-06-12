@@ -13,6 +13,8 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.ServerChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.LengthFieldPrepender;
+import io.netty.handler.codec.compression.Lz4FrameDecoder;
+import io.netty.handler.codec.compression.Lz4FrameEncoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslHandler;
 import lombok.extern.slf4j.Slf4j;
@@ -428,6 +430,8 @@ public class CorfuServer {
                 Boolean saslPlainTextAuth = context.getServerConfig(Boolean.class,
                         "--enable-sasl-plain-text-auth");
 
+                ch.pipeline().addLast(new Lz4FrameDecoder());
+                ch.pipeline().addLast(new Lz4FrameEncoder());
                 // If TLS is enabled, setup the encryption pipeline.
                 if (tlsEnabled) {
                     SSLEngine engine = sslContext.newEngine(ch.alloc());
