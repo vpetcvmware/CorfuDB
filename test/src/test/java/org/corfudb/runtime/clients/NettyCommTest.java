@@ -550,8 +550,7 @@ public class NettyCommTest extends AbstractCorfuTest {
         void bootstrapServer() throws Exception {
             NettyServerRouter nsr =
                 new NettyServerRouter(Collections.singletonList(new BaseServer(serverContext)));
-            f = CorfuServer.startAndListen(serverContext.getBossGroup(),
-                                            serverContext.getWorkerGroup(),
+            f = CorfuServer.startAndListen(serverContext.getWorkerGroup(),
                                             b -> CorfuServer.configureBootstrapOptions(
                                                 serverContext, b),
                                             serverContext,
