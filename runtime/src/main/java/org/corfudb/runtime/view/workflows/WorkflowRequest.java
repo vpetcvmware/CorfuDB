@@ -10,7 +10,6 @@ import org.corfudb.runtime.exceptions.WorkflowResultUnknownException;
 import org.corfudb.runtime.view.Layout;
 import org.corfudb.util.Sleep;
 
-import javax.annotation.Nonnull;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
@@ -18,7 +17,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 /**
- * An abstract class that defines a generec workflow request structure.
+ * An abstract class that defines a generic workflow request structure.
  * <p>
  * Created by Maithem on 1/19/18.
  */
@@ -53,7 +52,7 @@ public abstract class WorkflowRequest {
      * @return a management client that is connected to the selected
      * orchestrator
      */
-    protected ManagementClient getOrchestrator(Layout layout) {
+    protected ManagementClient getOrchestrator(@NonNull Layout layout) {
         List<String> activeLayoutServers = layout.getLayoutServers().stream()
                 .filter(s -> !layout.getUnresponsiveServers().contains(s)
                         && !s.equals(nodeForWorkflow))
@@ -85,8 +84,8 @@ public abstract class WorkflowRequest {
      * @throws TimeoutException if the workflow doesn't complete withint the timout
      *                          period
      */
-    private void waitForWorkflow(@Nonnull UUID workflow, @Nonnull ManagementClient client,
-                                 @Nonnull Duration timeout, @Nonnull Duration pollPeriod)
+    private void waitForWorkflow(@NonNull UUID workflow, @NonNull ManagementClient client,
+                                 @NonNull Duration timeout, @NonNull Duration pollPeriod)
             throws TimeoutException {
         long tries = timeout.toNanos() / pollPeriod.toNanos();
         for (long x = 0; x < tries; x++) {

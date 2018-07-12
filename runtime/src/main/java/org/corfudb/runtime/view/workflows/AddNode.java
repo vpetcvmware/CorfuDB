@@ -1,11 +1,11 @@
 package org.corfudb.runtime.view.workflows;
 
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.corfudb.protocols.wireprotocol.orchestrator.CreateWorkflowResponse;
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.view.Layout;
 
-import javax.annotation.Nonnull;
 import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
@@ -20,9 +20,9 @@ import java.util.concurrent.TimeoutException;
 @Slf4j
 public class AddNode extends WorkflowRequest {
 
-    public AddNode(@Nonnull String endpointToAdd, @Nonnull CorfuRuntime runtime,
-                   @Nonnull int retry, @Nonnull Duration timeout,
-                   @Nonnull Duration pollPeriod) {
+    public AddNode(@NonNull String endpointToAdd, @NonNull CorfuRuntime runtime,
+                   int retry, @NonNull Duration timeout,
+                   @NonNull Duration pollPeriod) {
         this.nodeForWorkflow = endpointToAdd;
         this.runtime = runtime;
         this.retry = retry;
@@ -31,7 +31,7 @@ public class AddNode extends WorkflowRequest {
     }
 
     @Override
-    protected UUID sendRequest(@Nonnull Layout layout) throws TimeoutException {
+    protected UUID sendRequest(@NonNull Layout layout) throws TimeoutException {
         // Select the current tail node and send an add node request to the orchestrator
         CreateWorkflowResponse resp = getOrchestrator(layout).addNodeRequest(nodeForWorkflow);
         log.info("sendRequest: requested to add {} on orchestrator {}:{}, layout {}",
@@ -41,7 +41,7 @@ public class AddNode extends WorkflowRequest {
     }
 
     @Override
-    protected boolean verifyRequest(@Nonnull Layout layout) {
+    protected boolean verifyRequest(@NonNull Layout layout) {
         // Verify that the node has been added and that the address space isn't
         // segmented
         return runtime.getLayoutView().getLayout()
