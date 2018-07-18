@@ -26,6 +26,7 @@ import org.corfudb.runtime.clients.TestRule;
 import org.corfudb.runtime.collections.ISMRMap;
 import org.corfudb.runtime.collections.SMRMap;
 import org.corfudb.runtime.exceptions.ServerNotReadyException;
+import org.corfudb.runtime.exceptions.UnreachableClusterException;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
 import org.corfudb.runtime.view.ClusterStatusReport.ClusterStatus;
 import org.corfudb.runtime.view.ClusterStatusReport.NodeStatus;
@@ -251,9 +252,9 @@ public class ManagementViewTest extends AbstractViewTest {
         // to detect failures to speed up test time.
         CFUtils.within(
                 CompletableFuture.allOf(
-                        getManagementServer(SERVERS.PORT_0).getManagementAgent().getSequencerBootstrappedFuture(),
-                        getManagementServer(SERVERS.PORT_1).getManagementAgent().getSequencerBootstrappedFuture(),
-                        getManagementServer(SERVERS.PORT_2).getManagementAgent().getSequencerBootstrappedFuture()),
+                        getManagementServer(SERVERS.PORT_0).getManagementAgent().getRecoveryBarrierFuture(),
+                        getManagementServer(SERVERS.PORT_1).getManagementAgent().getRecoveryBarrierFuture(),
+                        getManagementServer(SERVERS.PORT_2).getManagementAgent().getRecoveryBarrierFuture()),
                 PARAMETERS.TIMEOUT_NORMAL
         ).join();
 
@@ -377,9 +378,9 @@ public class ManagementViewTest extends AbstractViewTest {
         // to detect failures to speed up test time.
         CFUtils.within(
                 CompletableFuture.allOf(
-                        getManagementServer(SERVERS.PORT_0).getManagementAgent().getSequencerBootstrappedFuture(),
-                        getManagementServer(SERVERS.PORT_1).getManagementAgent().getSequencerBootstrappedFuture(),
-                        getManagementServer(SERVERS.PORT_2).getManagementAgent().getSequencerBootstrappedFuture()),
+                        getManagementServer(SERVERS.PORT_0).getManagementAgent().getRecoveryBarrierFuture(),
+                        getManagementServer(SERVERS.PORT_1).getManagementAgent().getRecoveryBarrierFuture(),
+                        getManagementServer(SERVERS.PORT_2).getManagementAgent().getRecoveryBarrierFuture()),
                 PARAMETERS.TIMEOUT_NORMAL
         ).join();
 
@@ -898,7 +899,7 @@ public class ManagementViewTest extends AbstractViewTest {
 
         CFUtils.within(
                 CompletableFuture.allOf(
-                        getManagementServer(SERVERS.PORT_0).getManagementAgent().getSequencerBootstrappedFuture()),
+                        getManagementServer(SERVERS.PORT_0).getManagementAgent().getRecoveryBarrierFuture()),
                 PARAMETERS.TIMEOUT_NORMAL
         ).join();
 
@@ -1515,5 +1516,105 @@ public class ManagementViewTest extends AbstractViewTest {
         assertThat(nodeStatusMap.get(SERVERS.ENDPOINT_1)).isEqualTo(NodeStatus.DOWN);
         assertThat(nodeStatusMap.get(SERVERS.ENDPOINT_2)).isEqualTo(NodeStatus.UP);
         assertThat(clusterStatus.getClusterStatus()).isEqualTo(ClusterStatus.UNAVAILABLE);
+    }
+
+    /**
+     * Tests that if the cluster gets stuck in a live-lock the systemDownHandler is invoked.
+     * Scenario: Cluster of 2 nodes - Nodes 0 and 1
+     * Some data (10 appends) is written into the cluster.
+     * Then rules are added on both the nodes' management agents so that they cannot reconfigure
+     * the system. Another rule is added to the tail of the chain to drop all READ_RESPONSES.
+     * The epoch is incremented and the new layout is pushed to both the nodes.
+     * NOTE: The sequencer is not bootstrapped for the new epoch.
+     * Now, both the management agents attempt to bootstrap the new sequencer but the
+     * FastObjectLoaders should stall due to the READ_RESPONSE drop rule.
+     * This triggers the systemDownHandler.
+     */
+    @Test
+    public void triggerSystemDownHandlerInDeadlock() throws Exception {
+        addServer(SERVERS.PORT_0);
+        addServer(SERVERS.PORT_1);
+
+        Layout l = new TestLayoutBuilder()
+                .setEpoch(1L)
+                .addLayoutServer(SERVERS.PORT_0)
+                .addLayoutServer(SERVERS.PORT_1)
+                .addSequencer(SERVERS.PORT_0)
+                .addSequencer(SERVERS.PORT_1)
+                .buildSegment()
+                .buildStripe()
+                .addLogUnit(SERVERS.PORT_0)
+                .addLogUnit(SERVERS.PORT_1)
+                .addToSegment()
+                .addToLayout()
+                .setClusterId(UUID.randomUUID())
+                .build();
+        bootstrapAllServers(l);
+        corfuRuntime = getRuntime(l).connect();
+
+        CorfuRuntime managementRuntime0 = getManagementServer(SERVERS.PORT_0)
+                .getManagementAgent().getCorfuRuntime();
+        CorfuRuntime managementRuntime1 = getManagementServer(SERVERS.PORT_1)
+                .getManagementAgent().getCorfuRuntime();
+
+        // Waiting for management servers to send the bootstrap sequencer request and be ready
+        // to detect failures to speed up test time.
+        CFUtils.within(
+                CompletableFuture.allOf(
+                        getManagementServer(SERVERS.PORT_0).getManagementAgent().getRecoveryBarrierFuture(),
+                        getManagementServer(SERVERS.PORT_1).getManagementAgent().getRecoveryBarrierFuture()),
+                PARAMETERS.TIMEOUT_NORMAL
+        ).join();
+
+        IStreamView streamView = corfuRuntime.getStreamsView()
+                .get(CorfuRuntime.getStreamID("testStream"));
+        final byte[] payload = "test".getBytes();
+        final int num = 10;
+        for (int i = 0; i < num; i++) {
+            streamView.append(payload);
+        }
+
+        // Setting aggressive timeouts
+        setAggressiveTimeouts(l, corfuRuntime, managementRuntime0, managementRuntime1);
+
+        setAggressiveDetectorTimeouts(SERVERS.PORT_0, SERVERS.PORT_1);
+
+        final Semaphore semaphore = new Semaphore(2);
+        semaphore.acquire(2);
+
+        //Release the semaphore on invocation.
+        Runnable systemDownHandler = () -> {
+            semaphore.release();
+            throw new UnreachableClusterException("Runtime stalled. aborting operation.");
+        };
+        managementRuntime0.registerSystemDownHandler(systemDownHandler);
+        managementRuntime1.registerSystemDownHandler(systemDownHandler);
+        final int sysDownTriggerLimit = 3;
+        managementRuntime0.getParameters().setSystemDownHandlerTriggerLimit(sysDownTriggerLimit);
+        managementRuntime1.getParameters().setSystemDownHandlerTriggerLimit(sysDownTriggerLimit);
+
+
+        TestRule testRule = new TestRule()
+                .matches(m -> m.getMsgType().equals(CorfuMsgType.SET_EPOCH))
+                .drop();
+        addClientRule(managementRuntime0, testRule);
+        addClientRule(managementRuntime1, testRule);
+
+        addServerRule(SERVERS.PORT_1, new TestRule().matches(m -> m.getMsgType().equals(CorfuMsgType.READ_RESPONSE)).drop());
+
+        Layout newLayout = new Layout(l);
+        newLayout.setEpoch(newLayout.getEpoch() + 1);
+        corfuRuntime.getLayoutView().getRuntimeLayout(newLayout).moveServersToEpoch();
+        corfuRuntime.getLayoutView().updateLayout(newLayout, 1L);
+
+        assertThat(semaphore
+                .tryAcquire(2, PARAMETERS.TIMEOUT_LONG.toMillis(), TimeUnit.MILLISECONDS))
+                .isTrue();
+
+        clearServerRules(SERVERS.PORT_1);
+        clearClientRules(managementRuntime0);
+        clearClientRules(managementRuntime1);
+
+        assertThat(corfuRuntime.getSequencerView().query()).isNotNull();
     }
 }
